@@ -10,10 +10,13 @@ AC_CONFIG_HEADERS([config.h])
 AC_PROG_CC
 
 # Checks for libraries.
+AC_CHECK_LIB([bluetooth], [bt_malloc])
+AC_CHECK_LIB([cwiid], [cwiid_open])
+AC_CHECK_LIB([jack], [jack_midi_event_write])
 
 # Checks for header files.
 
-PKG_CHECK_MODULES([DEPS], [cwiid])
+PKG_CHECK_MODULES([DEPS], [cwiid jack])
 
 # Checks for typedefs, structures, and compiler characteristics.
 

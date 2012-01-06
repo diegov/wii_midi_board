@@ -6,6 +6,165 @@
 #include <cwiid.h>
 #include "midi_board.h"
 #include <time.h>
+#include <jack/jack.h>
+#include <jack/midiport.h>
+
+cwiid_wiimote_t *wiimote;
+midi_board_jack_runtime_data_t jack_runtime_data;
+
+jack_nframes_t ticks;
+
+int main(int argc, char* argv[]) 
+{
+  ticks = 0;
+  wiimote = NULL;
+
+  if (midi_board_init_wiimote(&wiimote)) {
+    printf("Failed to init wiimote");
+    return 1;
+  }
+
+  printf("Connected to the wii controller!\n");
+
+  if (midi_board_init_jack(&jack_runtime_data, 
+			   &midi_board_jack_process, 
+			   &midi_board_jack_shutdown)) 
+    {
+      printf("Oh.. Error initialising jack\n");
+      cwiid_close(wiimote);
+      return 1;
+    }
+
+  while(1)
+    {
+      sleep(1);
+    }
+
+  cwiid_close(wiimote);
+  jack_client_close(jack_runtime_data.client);
+
+  printf("Done\n");
+  return 0;
+}
+
+void midi_board_jack_set_buffer_cc_data(jack_midi_data_t *data_buffer, 
+					unsigned int chan, 
+					int cc, int value)
+{
+  data_buffer[0] |= 0xb0;
+  data_buffer[0] |= chan;
+  data_buffer[1] = cc;
+  data_buffer[2] = value;
+}
+
+int midi_board_jack_send_cc(void *port_buffer, jack_nframes_t nframes, 
+			    unsigned int chan, 
+			    unsigned int cc, unsigned int value)
+{
+  if (!port_buffer)
+    {
+      printf("Failed to find the buffer to wite cc data to!\n");
+      return 1;
+    }
+
+  jack_midi_data_t *data_buffer;
+  if ((data_buffer = jack_midi_event_reserve(port_buffer, 1, 3)) == NULL)
+    {
+      printf("Failed to send cc data.\n");
+      return 1;
+    }
+
+  midi_board_jack_set_buffer_cc_data(data_buffer, chan, cc, value);
+  return 0;
+}
+
+int midi_board_init_jack(midi_board_jack_runtime_data_t *runtime_data,
+			 JackProcessCallback process_callback, 
+			 JackShutdownCallback shutdown_callback) 
+{
+  runtime_data->client = jack_client_open("wii_midi_board", (jack_options_t)0, NULL);
+  if (!runtime_data->client)
+    {
+      fprintf(stderr, "Failed to connect to JACK. Make sure the server is running.\n");
+      return 1;
+    }
+
+  runtime_data->port = jack_port_register(runtime_data->client, "midi_out", JACK_DEFAULT_MIDI_TYPE, JackPortIsOutput, 0);
+  if (!runtime_data->port)
+    {
+      fprintf(stderr, "Failed to create the midi out port!\n");
+      return 1;
+    }
+
+  if (jack_set_process_callback(runtime_data->client, process_callback, 0))
+    {
+      fprintf(stderr, "Failed to set the process callback!\n");
+      return 1;
+    }
+
+  jack_on_shutdown(runtime_data->client, shutdown_callback, 0);
+
+  runtime_data->sample_rate = jack_get_sample_rate(runtime_data->client);
+
+  if (jack_activate(runtime_data->client))
+    {
+      fprintf(stderr, "Failed to activate the client!\n");
+      return 1;
+    }
+
+  return 0;
+}
+
+int midi_board_should_send_cc(jack_nframes_t samples_passed) 
+{
+  const jack_nframes_t control_rate = 1;
+  jack_nframes_t control_step = jack_runtime_data.sample_rate / control_rate;
+
+  ticks += samples_passed;
+  if (ticks > (control_step))
+    {
+      ticks -= control_step;
+      return 1;
+    }
+  else
+    {
+      return 0;
+    }
+}
+
+int midi_board_jack_process(jack_nframes_t nframes, void *arg)
+{
+  jack_port_t *port = jack_runtime_data.port;
+  void *port_buffer = jack_port_get_buffer(port, nframes);
+
+  jack_midi_clear_buffer(port_buffer);
+
+  if (midi_board_should_send_cc(nframes))
+    {
+      midi_board_center_t center;
+
+      if (midi_board_get_center(wiimote, &center)) 
+	{
+	  printf("Oh.. Error getting the center\n");
+	  cwiid_close(wiimote);
+	  jack_client_close(jack_runtime_data.client);
+	  return 1;
+	}
+
+      midi_board_jack_send_cc(port_buffer, nframes, 1, 
+			      10, MIN(127, (center.Y - 80)));
+
+      midi_board_jack_send_cc(port_buffer, nframes, 1, 
+			      7, MIN(127, (center.X - 80)));
+
+    }
+  return 0;
+}
+
+void midi_board_jack_shutdown(void *arg)
+{
+  exit(1);
+}
 
 int midi_board_get_center(cwiid_wiimote_t *wiimote, midi_board_center_t *center) 
 {
@@ -14,8 +173,7 @@ int midi_board_get_center(cwiid_wiimote_t *wiimote, midi_board_center_t *center)
       printf("Oh.. Error getting the status\n");
       return 1;
     }
-  printf("Got status!\n");
-
+  
   struct cwiid_state state;
   if (cwiid_get_state(wiimote, &state))
     {
@@ -23,13 +181,21 @@ int midi_board_get_center(cwiid_wiimote_t *wiimote, midi_board_center_t *center)
       return 1;
     }
 
-  printf("Got state!\n");
-  printf("acc: %u\n", state.acc[0]);
+  center->X = state.acc[0];
+  center->Y = state.acc[1];
+
+  printf("acc[0]: %u\n", state.acc[0]); 
+  printf("acc[1]: %u\n", state.acc[1]); 
+  printf("acc[2]: %u\n", state.acc[2]); 
+  
+  /* printf("MotionPlus0: %u\n", state.ext.motionplus.angle_rate[0]); */
+  /* printf("MotionPlus1: %u\n", state.ext.motionplus.angle_rate[1]); */
+  /* printf("MotionPlus2: %u\n", state.ext.motionplus.angle_rate[2]); */
 
   return 0;
 }
 
-int init_wiimote(cwiid_wiimote_t **wiimote) 
+int midi_board_init_wiimote(cwiid_wiimote_t **wiimote) 
 {
   bdaddr_t bdaddr = *BDADDR_ANY;
 
@@ -40,38 +206,14 @@ int init_wiimote(cwiid_wiimote_t **wiimote)
       return 1;
     }
 
-  cwiid_command(*wiimote, CWIID_CMD_LED, CWIID_LED1_ON | CWIID_LED4_ON);
-  return 0;
-}
-
-int main(int argc, char* argv[]) 
-{
-  cwiid_wiimote_t *wiimote = NULL;
-
-  if (init_wiimote(&wiimote)) {
-    printf("Failed to init wiimote");
-    return 1;
-  }
-  
-  printf("Connected!\n");
-
-  midi_board_center_t center;
-
-  int j;
-  for (j = 0; j < 20; ++j) 
+  if (cwiid_set_rpt_mode(*wiimote, CWIID_RPT_EXT | CWIID_RPT_ACC))
     {
-      if (midi_board_get_center(wiimote, &center)) 
-	{
-	  printf("Oh.. Error getting the center\n");
-	  cwiid_close(wiimote);
-	  return 1;
-	}
-      sleep(1);
+      printf("Failed to set the report mode!\n");
+      return 1;
     }
 
-  cwiid_close(wiimote);
+  cwiid_command(*wiimote, CWIID_CMD_LED, CWIID_LED1_ON | CWIID_LED4_ON);
 
-  printf("Done\n");
   return 0;
 }
 

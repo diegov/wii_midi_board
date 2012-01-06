@@ -1,0 +1,9 @@
+*~
+Makefile
+*.status
+*.log
+*.cache
+*.scan
+midi_board
+config.h
+configure
