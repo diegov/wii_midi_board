@@ -1,0 +1,15 @@
+PROGRAM = midi_board
+PROGRAM_FILES = midi_board.c
+
+CFLAGS=$(DEPS_CFLAGS)
+LDFLAGS=$(DEPS_LIBS)
+
+LIBS 	+= -lcwiid -lbluetooth
+
+all: $(PROGRAM)
+
+%: %.c 
+	cc $(PROGRAM_FILES) $(CFLAGS) $(LIBS) $(LDFLAGS) -o $(PROGRAM) 
+
+clean:
+	@rm -rf $(PROGRAM)
