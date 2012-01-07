@@ -16,11 +16,13 @@ typedef struct midi_board_jack_runtime_data {
   jack_client_t *client;
   jack_port_t *port;
   jack_nframes_t sample_rate;
+  unsigned int previous_X;
+  unsigned int previous_Y;
 } midi_board_jack_runtime_data_t;
 
 int midi_board_jack_send_cc(void *port_buffer, jack_nframes_t nframes, 
-		       unsigned int chan, unsigned int cc, 
-		       unsigned int value);
+		       unsigned char chan, unsigned char cc, 
+		       unsigned char value);
 
 int midi_board_init_jack(midi_board_jack_runtime_data_t *jack_runtime_data,
 			 JackProcessCallback process_callback, 

@@ -47,34 +47,22 @@ int main(int argc, char* argv[])
   return 0;
 }
 
-void midi_board_jack_set_buffer_cc_data(jack_midi_data_t *data_buffer, 
-					unsigned int chan, 
-					int cc, int value)
-{
-  data_buffer[0] |= 0xb0;
-  data_buffer[0] |= chan;
-  data_buffer[1] = cc;
-  data_buffer[2] = value;
-}
-
 int midi_board_jack_send_cc(void *port_buffer, jack_nframes_t nframes, 
-			    unsigned int chan, 
-			    unsigned int cc, unsigned int value)
+			    unsigned char chan, 
+			    unsigned char cc, unsigned char value)
 {
-  if (!port_buffer)
-    {
-      printf("Failed to find the buffer to wite cc data to!\n");
-      return 1;
-    }
-
   jack_midi_data_t *data_buffer;
-  if ((data_buffer = jack_midi_event_reserve(port_buffer, 1, 3)) == NULL)
+  if ((data_buffer = jack_midi_event_reserve(port_buffer, 0, 3)) == NULL)
     {
       printf("Failed to send cc data.\n");
       return 1;
     }
 
-  midi_board_jack_set_buffer_cc_data(data_buffer, chan, cc, value);
+  data_buffer[0] |= 0xb0;
+  data_buffer[0] |= (chan - 1);
+  data_buffer[1] = cc;
+  data_buffer[2] = value;
+
   return 0;
 }
 
@@ -117,7 +105,7 @@ int midi_board_init_jack(midi_board_jack_runtime_data_t *runtime_data,
 
 int midi_board_should_send_cc(jack_nframes_t samples_passed) 
 {
-  const jack_nframes_t control_rate = 1;
+  const jack_nframes_t control_rate = 30;
   jack_nframes_t control_step = jack_runtime_data.sample_rate / control_rate;
 
   ticks += samples_passed;
@@ -132,10 +120,29 @@ int midi_board_should_send_cc(jack_nframes_t samples_passed)
     }
 }
 
+int midi_board_send_if_changed(unsigned int *old_val, unsigned int new_val, 
+			       unsigned char cc, void* port_buffer, 
+			       jack_nframes_t nframes)
+{
+  unsigned int new_val_normalised = MIN(127, (new_val - 80));
+  if (new_val_normalised != *old_val)
+    {
+      midi_board_jack_send_cc(port_buffer, nframes, 1, cc, 
+			      new_val_normalised);
+      *old_val = new_val_normalised;
+    }
+}
+
 int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 {
   jack_port_t *port = jack_runtime_data.port;
   void *port_buffer = jack_port_get_buffer(port, nframes);
+
+  if (!port_buffer)
+    {
+      printf("Failed to find the buffer to wite cc data to!\n");
+      return 1;
+    }
 
   jack_midi_clear_buffer(port_buffer);
 
@@ -151,12 +158,11 @@ int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 	  return 1;
 	}
 
-      midi_board_jack_send_cc(port_buffer, nframes, 1, 
-			      10, MIN(127, (center.Y - 80)));
+      midi_board_send_if_changed(&(jack_runtime_data.previous_X), 
+       				 center.X, 11, port_buffer, nframes); 
 
-      midi_board_jack_send_cc(port_buffer, nframes, 1, 
-			      7, MIN(127, (center.X - 80)));
-
+      midi_board_send_if_changed(&(jack_runtime_data.previous_Y),
+      				 center.Y, 7, port_buffer, nframes);
     }
   return 0;
 }
@@ -184,14 +190,10 @@ int midi_board_get_center(cwiid_wiimote_t *wiimote, midi_board_center_t *center)
   center->X = state.acc[0];
   center->Y = state.acc[1];
 
-  printf("acc[0]: %u\n", state.acc[0]); 
-  printf("acc[1]: %u\n", state.acc[1]); 
-  printf("acc[2]: %u\n", state.acc[2]); 
+  /* printf("acc[0]: %u\n", state.acc[0]);  */
+  /* printf("acc[1]: %u\n", state.acc[1]);  */
+  /* printf("acc[2]: %u\n", state.acc[2]);  */
   
-  /* printf("MotionPlus0: %u\n", state.ext.motionplus.angle_rate[0]); */
-  /* printf("MotionPlus1: %u\n", state.ext.motionplus.angle_rate[1]); */
-  /* printf("MotionPlus2: %u\n", state.ext.motionplus.angle_rate[2]); */
-
   return 0;
 }
 
