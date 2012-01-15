@@ -1,0 +1,45 @@
+Copyright (C) 2012 Diego Veralli <diegoveralli@yahoo.co.uk>
+
+midi_board: a little program that reads info from the wii balance board
+and outputs midi control messages through jack
+
+DEPENDENCIES
+
+* Cwiid <http://abstrakraft.org/cwiid/>
+* Jack <http://jackaudio.org/>
+
+On Debian systems:
+apt-get install libcwiid-dev libjack-dev
+
+OTHER REQUIREMENTS
+
+* A wii balance board
+* Bluetooth
+
+USAGE
+
+* Run midi_board
+* Press the sync button (next to the batteries) in the wii balance board 
+  and press enter
+* Once the balance board is synchronised, place the board down and press 
+  enter to read the calibration data
+* At this point the program will start sending data for CCs 7 and 11
+  on channel 1
+
+midi_board sends the data throguh jack midi. If you're using an application that 
+only accepts alsa midi input, you can use a2j <http://home.gna.org/a2jmidid/> 
+to bridge between jack midi and alsa midi.
+
+CONFIGURATION
+
+None at the moment
+
+TODO
+
+* Configurable CC numbers
+* Configurable control rate
+* Sample-accurate scheduling of CC messages, we're relying on the 
+  frames/period being small enough but we should do it properly
+* Move wii IO out of jack callback
+* Adjustable input range, -1/1 values aren't really possible on the
+  wii balance board, there's always some weight on the opposite side

@@ -1,5 +1,23 @@
-/* midi_board.c: a little program that reads info from the wii balance board
-   and outputs midi control messages through jack */
+/* midi_board: a little program that reads info from the wii balance board
+ * and outputs midi control messages through jack
+ *
+ * Copyright (C) 2012 Diego Veralli <diegoveralli@yahoo.co.uk>
+ *
+ *  This file is part of midi_board.
+ *  
+ *  midi_board is free software: you can redistribute it and/or modify
+ *  it under the terms of the GNU General Public License as published by
+ *  the Free Software Foundation, either version 3 of the License, or
+ *  (at your option) any later version.
+ *
+ *  midi_board is distributed in the hope that it will be useful,
+ *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  GNU General Public License for more details.
+ *
+ *  You should have received a copy of the GNU General Public License
+ *  along with midi_board. If not, see <http://www.gnu.org/licenses/>.
+ */
 
 #include <stdio.h>
 #include <bluetooth/bluetooth.h>
@@ -57,7 +75,7 @@ int midi_board_jack_send_cc(void *port_buffer, jack_nframes_t nframes,
   jack_midi_data_t *data_buffer;
   if ((data_buffer = jack_midi_event_reserve(port_buffer, 0, 3)) == NULL)
     {
-      printf("Failed to send cc data.\n");
+      fprintf(stderr, "Failed to send cc data.\n");
       return 1;
     }
 
@@ -143,7 +161,7 @@ int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 
   if (!port_buffer)
     {
-      printf("Failed to find the buffer to wite cc data to!\n");
+      fprintf(stderr, "Failed to find the buffer to wite cc data to!\n");
       return 1;
     }
 
@@ -155,7 +173,7 @@ int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 
       if (midi_board_update_centre(wiimote, &centre, calibration)) 
 	{
-	  printf("Oh.. Error getting the centre\n");
+	  fprintf(stderr, "Oh.. Error getting the centre\n");
 	  cwiid_close(wiimote);
 	  jack_client_close(jack_runtime_data.client);
 	  return 1;
@@ -186,14 +204,14 @@ int midi_board_update_centre(cwiid_wiimote_t *wiimote,
 {
   if (cwiid_request_status(wiimote))
     {
-      printf("Oh.. Error getting the status\n");
+      fprintf(stderr, "Oh.. Error getting the status\n");
       return 1;
     }
   
   struct cwiid_state state;
   if (cwiid_get_state(wiimote, &state))
     {
-      printf("Oh... Error getting the state.\n");
+      fprintf(stderr, "Oh... Error getting the state.\n");
       return 1;
     }
 
@@ -274,13 +292,13 @@ int midi_board_init_wiimote(cwiid_wiimote_t **wiimote,
   *wiimote = cwiid_open(&bdaddr, CWIID_FLAG_CONTINUOUS);
   if (!(*wiimote)) 
     {
-      printf("Failed to connect, shit!\n");
+      fprintf(stderr, "Failed to connect, shit!\n");
       return 1;
     }
 
   if (cwiid_set_rpt_mode(*wiimote, CWIID_RPT_EXT | CWIID_RPT_ACC | CWIID_RPT_BALANCE))
     {
-      printf("Failed to set the report mode!\n");
+      fprintf(stderr, "Failed to set the report mode!\n");
       return 1;
     }
 
