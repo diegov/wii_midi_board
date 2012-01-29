@@ -19,6 +19,7 @@
  *  along with midi_board. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <bluetooth/bluetooth.h>
@@ -27,6 +28,7 @@
 #include <time.h>
 #include <jack/jack.h>
 #include <jack/midiport.h>
+#include <jack/ringbuffer.h>
 
 cwiid_wiimote_t *wiimote;
 struct balance_cal *calibration;
@@ -34,12 +36,17 @@ struct balance_cal *calibration;
 midi_board_jack_runtime_data_t jack_runtime_data;
 
 jack_nframes_t ticks;
+midi_board_centre_t *centre;
+
+pthread_mutex_t wii_io_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_cond_t  wii_must_fetch = PTHREAD_COND_INITIALIZER;
 
 int main(int argc, char *argv[]) 
 {
   ticks = 0;
   wiimote = NULL;
   calibration = malloc(sizeof(struct balance_cal));
+  centre = malloc(sizeof(midi_board_centre_t));
 
   if (midi_board_init_wiimote(&wiimote, calibration)) {
     printf("Failed to init wiimote");
@@ -67,6 +74,9 @@ int main(int argc, char *argv[])
       return 1;
     }
 
+  pthread_t thread_id;
+  pthread_create(&thread_id, NULL, midi_board_wii_io_thread, NULL);
+
   while(1)
     {
       sleep(1);
@@ -80,6 +90,7 @@ int main(int argc, char *argv[])
   jack_client_close(jack_runtime_data.client);
 
   printf("Done\n");
+
   return 0;
 }
 
@@ -180,7 +191,7 @@ int midi_board_init_jack(midi_board_init_jack_args_t args)
 
 int midi_board_should_send_cc(jack_nframes_t samples_passed) 
 {
-  const jack_nframes_t control_rate = 20; //TODO: configurable
+  const jack_nframes_t control_rate = 30; //TODO: configurable
   jack_nframes_t control_step = jack_runtime_data.sample_rate / control_rate;
 
   ticks += samples_passed;
@@ -208,9 +219,35 @@ int midi_board_send_if_changed(unsigned int *old_val, unsigned int new_val,
     }
 }
 
+void* midi_board_wii_io_thread(void *arg)
+{
+  pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+  pthread_mutex_lock(&wii_io_lock);
+
+  while(1)
+    {
+      if (midi_board_update_centre(wiimote, centre, calibration))
+      	{
+      	  fprintf(stderr, "Oh.. Error getting the centre\n");
+	  //TODO: Signal
+      	  /* cwiid_close(wiimote); */
+      	  /* jack_client_close(jack_runtime_data.client); */
+      	  /* return 1; */
+      	}
+      else 
+	{
+	  centre->processed = 0;
+	}
+
+      //printf("We should be getting data here!\n");
+      pthread_cond_wait(&wii_must_fetch, &wii_io_lock);
+    }
+
+  pthread_mutex_unlock(&wii_io_lock);
+}
+
 int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 {
-  //return 0;
   jack_port_t *port = jack_runtime_data.port;
   void *port_buffer = jack_port_get_buffer(port, nframes);
 
@@ -221,29 +258,29 @@ int midi_board_jack_process(jack_nframes_t nframes, void *arg)
     }
 
   jack_midi_clear_buffer(port_buffer);
-
-  if (midi_board_should_send_cc(nframes))
+  if (pthread_mutex_trylock(&wii_io_lock) == 0) 
     {
-      midi_board_centre_t centre;
-
-      if (midi_board_update_centre(wiimote, &centre, calibration)) 
+      if (centre->processed == 0)
 	{
-	  fprintf(stderr, "Oh.. Error getting the centre\n");
-	  cwiid_close(wiimote);
-	  jack_client_close(jack_runtime_data.client);
-	  return 1;
+	  unsigned char send_val = (unsigned char)((centre->X + 1) * 64);
+      
+	  midi_board_send_if_changed(&(jack_runtime_data.previous_X),
+				     send_val,
+				     11, port_buffer, nframes);
+
+	  send_val = (unsigned char)((centre->Y + 1) * 64);
+	  midi_board_send_if_changed(&(jack_runtime_data.previous_Y),
+				     send_val,
+				     7, port_buffer, nframes);
+	  centre->processed = 1;
 	}
 
-      unsigned char send_val = (unsigned char)((centre.X + 1) * 64);
-      //printf("Original: %f. Converted: %u\n", centre.X, send_val);
-      midi_board_send_if_changed(&(jack_runtime_data.previous_X), 
-       				 send_val, 
-				 11, port_buffer, nframes); 
+      if (midi_board_should_send_cc(nframes))
+	{
+	  pthread_cond_signal(&wii_must_fetch);
+	}
 
-      send_val = (unsigned char)((centre.Y + 1) * 64);
-      midi_board_send_if_changed(&(jack_runtime_data.previous_Y),
-       				 send_val,
-       				 7, port_buffer, nframes); 
+      pthread_mutex_unlock(&wii_io_lock);
     }
   return 0;
 }

@@ -40,8 +40,7 @@ TODO
 * Configurable control rate
 * Sample-accurate scheduling of CC messages, we're relying on the 
   frames/period being small enough but we should do it properly
-* Move wii IO out of jack callback thread (there are mallocs and mutexes 
-  in libcwiid, and, more importantly, it actually causes xruns)
+* Cleanup Wii IO thread, handle signals
 * Adjustable input range, -1/1 values aren't really possible on the
   wii balance board, there's always some weight on the opposite side
 * Jack session support

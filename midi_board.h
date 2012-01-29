@@ -35,6 +35,7 @@
 typedef struct midi_board_centre {
   double X;
   double Y;
+  int processed;
 } midi_board_centre_t;
 
 typedef struct midi_board_jack_runtime_data {
@@ -68,6 +69,8 @@ int midi_board_init_jack(midi_board_init_jack_args_t args);
 
 int midi_board_jack_process(jack_nframes_t nframes, void *arg);
 
+void* midi_board_wii_io_thread(void *arg);
+
 void midi_board_jack_shutdown(void *arg);
 
 void midi_board_jack_session_callback(jack_session_event_t *event, void *arg);
@@ -77,3 +80,4 @@ int midi_board_init_wiimote(cwiid_wiimote_t **wiimote, struct balance_cal *calib
 int midi_board_update_centre(cwiid_wiimote_t *wiimote, 
 			     midi_board_centre_t *centre, 
 			     struct balance_cal *balance_cal);
+

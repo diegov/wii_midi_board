@@ -21,7 +21,7 @@ PROGRAM_FILES = midi_board.c
 CFLAGS=$(DEPS_CFLAGS)
 LDFLAGS=$(DEPS_LIBS)
 
-LIBS 	+= -lcwiid -lbluetooth -ljack
+LIBS 	+= -lpthread -lcwiid -lbluetooth -ljack
 
 all: $(PROGRAM)
 
