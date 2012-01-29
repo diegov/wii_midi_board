@@ -180,7 +180,7 @@ int midi_board_init_jack(midi_board_init_jack_args_t args)
 
 int midi_board_should_send_cc(jack_nframes_t samples_passed) 
 {
-  const jack_nframes_t control_rate = 30; //TODO: configurable
+  const jack_nframes_t control_rate = 20; //TODO: configurable
   jack_nframes_t control_step = jack_runtime_data.sample_rate / control_rate;
 
   ticks += samples_passed;
