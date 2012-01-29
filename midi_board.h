@@ -19,10 +19,15 @@
  *  along with midi_board. If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "config.h"
 #include <stdio.h>
 #include <cwiid.h>
 #include <jack/jack.h>
 #include <jack/midiport.h>
+
+#ifdef JACK_SESSION
+  #include <jack/session.h>
+#endif
 
 #define MIN(X,Y) ((X) < (Y) ? (X) : (Y))
 #define MAX(X,Y) ((X) > (Y) ? (X) : (Y))
@@ -38,19 +43,34 @@ typedef struct midi_board_jack_runtime_data {
   jack_nframes_t sample_rate;
   unsigned int previous_X;
   unsigned int previous_Y;
+  unsigned int quit;
 } midi_board_jack_runtime_data_t;
+
+typedef struct midi_board_init_jack_args {
+  midi_board_jack_runtime_data_t *runtime_data;
+  JackProcessCallback process_callback;
+  JackShutdownCallback shutdown_callback;
+
+#ifdef JACK_SESSION
+
+  char *session_id;
+  JackSessionCallback session_callback;
+
+#endif
+
+} midi_board_init_jack_args_t;
 
 int midi_board_jack_send_cc(void *port_buffer, jack_nframes_t nframes, 
 			    unsigned char chan, unsigned char cc, 
 			    unsigned char value);
 
-int midi_board_init_jack(midi_board_jack_runtime_data_t *jack_runtime_data,
-			 JackProcessCallback process_callback, 
-			 JackShutdownCallback shutdown_callback);
+int midi_board_init_jack(midi_board_init_jack_args_t args);
 
 int midi_board_jack_process(jack_nframes_t nframes, void *arg);
 
 void midi_board_jack_shutdown(void *arg);
+
+void midi_board_jack_session_callback(jack_session_event_t *event, void *arg);
 
 int midi_board_init_wiimote(cwiid_wiimote_t **wiimote, struct balance_cal *calibration);
 

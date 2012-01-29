@@ -20,6 +20,7 @@
  */
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <bluetooth/bluetooth.h>
 #include <cwiid.h>
 #include "midi_board.h"
@@ -47,11 +48,21 @@ int main(int argc, char *argv[])
 
   printf("Connected to the wii controller!\n");
 
-  if (midi_board_init_jack(&jack_runtime_data, 
-			   &midi_board_jack_process, 
-			   &midi_board_jack_shutdown)) 
+  midi_board_init_jack_args_t args;
+  args.runtime_data = &jack_runtime_data;
+  args.process_callback = &midi_board_jack_process;
+  args.shutdown_callback = &midi_board_jack_shutdown;
+
+#ifdef JACK_SESSION
+
+  args.session_id = NULL;
+  args.session_callback = &midi_board_jack_session_callback;
+
+#endif
+
+  if (midi_board_init_jack(args))
     {
-      printf("Oh.. Error initialising jack\n");
+      fprintf(stderr, "Oh.. Error initialising jack\n");
       cwiid_close(wiimote);
       return 1;
     }
@@ -59,6 +70,10 @@ int main(int argc, char *argv[])
   while(1)
     {
       sleep(1);
+      if (jack_runtime_data.quit)
+	{
+	  break;
+	}
     }
 
   cwiid_close(wiimote);
@@ -87,11 +102,42 @@ int midi_board_jack_send_cc(void *port_buffer, jack_nframes_t nframes,
   return 0;
 }
 
-int midi_board_init_jack(midi_board_jack_runtime_data_t *runtime_data,
-			 JackProcessCallback process_callback, 
-			 JackShutdownCallback shutdown_callback) 
+#ifdef JACK_SESSION 
+
+void midi_board_jack_session_callback(jack_session_event_t *event, void *arg)
 {
-  runtime_data->client = jack_client_open("wii_midi_board", (jack_options_t)0, NULL);
+  char retval[100];
+
+  snprintf(retval, 100, "midi_board_session_client %s", event->client_uuid);
+  event->command_line = strdup(retval);
+
+  jack_session_reply(jack_runtime_data.client, event);
+
+  if (event->type == JackSessionSaveAndQuit) 
+    {
+      jack_runtime_data.quit = 1;
+    }
+
+  jack_session_event_free(event);
+}
+
+#endif
+
+int midi_board_init_jack(midi_board_init_jack_args_t args)
+{
+  midi_board_jack_runtime_data_t *runtime_data = args.runtime_data;
+#ifdef JACK_SESSION
+  if (args.session_id) 
+    {
+      runtime_data->client = jack_client_open("wii_midi_board", JackSessionID, NULL, args.session_id);
+    }
+  else
+    {
+      runtime_data->client = jack_client_open("wii_midi_board", JackNullOption, NULL);
+    }
+#else
+  runtime_data->client = jack_client_open("wii_midi_board", JackNullOption, NULL);
+#endif
   if (!runtime_data->client)
     {
       fprintf(stderr, "Failed to connect to JACK. Make sure the server is running.\n");
@@ -105,13 +151,21 @@ int midi_board_init_jack(midi_board_jack_runtime_data_t *runtime_data,
       return 1;
     }
 
-  if (jack_set_process_callback(runtime_data->client, process_callback, 0))
+  if (jack_set_process_callback(runtime_data->client, args.process_callback, 0))
     {
       fprintf(stderr, "Failed to set the process callback!\n");
       return 1;
     }
 
-  jack_on_shutdown(runtime_data->client, shutdown_callback, 0);
+  jack_on_shutdown(runtime_data->client, args.shutdown_callback, 0);
+
+#ifdef JACK_SESSION
+  if (jack_set_session_callback(runtime_data->client, args.session_callback, NULL))
+    {
+      fprintf(stderr, "Failed to set the session callback!\n");
+      return 1;
+    }
+#endif
 
   runtime_data->sample_rate = jack_get_sample_rate(runtime_data->client);
 
@@ -126,7 +180,7 @@ int midi_board_init_jack(midi_board_jack_runtime_data_t *runtime_data,
 
 int midi_board_should_send_cc(jack_nframes_t samples_passed) 
 {
-  const jack_nframes_t control_rate = 30;
+  const jack_nframes_t control_rate = 30; //TODO: configurable
   jack_nframes_t control_step = jack_runtime_data.sample_rate / control_rate;
 
   ticks += samples_passed;
@@ -156,6 +210,7 @@ int midi_board_send_if_changed(unsigned int *old_val, unsigned int new_val,
 
 int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 {
+  //return 0;
   jack_port_t *port = jack_runtime_data.port;
   void *port_buffer = jack_port_get_buffer(port, nframes);
 
@@ -208,7 +263,7 @@ int midi_board_update_centre(cwiid_wiimote_t *wiimote,
       return 1;
     }
   
-  struct cwiid_state state;
+  struct cwiid_state state; 
   if (cwiid_get_state(wiimote, &state))
     {
       fprintf(stderr, "Oh... Error getting the state.\n");
