@@ -24,6 +24,7 @@
 #include <cwiid.h>
 #include <jack/jack.h>
 #include <jack/midiport.h>
+#include "gui.h"
 
 #ifdef JACK_SESSION
   #include <jack/session.h>
@@ -42,30 +43,39 @@ typedef struct midi_board_jack_runtime_data {
   jack_client_t *client;
   jack_port_t *port;
   jack_nframes_t sample_rate;
-  unsigned int previous_X;
-  unsigned int previous_Y;
-  unsigned int quit;
 } midi_board_jack_runtime_data_t;
 
-typedef struct midi_board_init_jack_args {
-  midi_board_jack_runtime_data_t *runtime_data;
-  JackProcessCallback process_callback;
-  JackShutdownCallback shutdown_callback;
-
-#ifdef JACK_SESSION
-
+typedef struct midi_board_options {
   char *session_id;
-  JackSessionCallback session_callback;
+  double min_x;
+  double max_x;
+  double min_y;
+  double max_y;
+} midi_board_options_t;
 
-#endif
+typedef struct midi_board_data {
+  midi_board_options_t options;
+  int quit;
 
-} midi_board_init_jack_args_t;
+  cwiid_wiimote_t *wiimote;
+
+  midi_board_centre_t centre;
+  struct balance_cal calibration;
+
+  midi_board_jack_runtime_data_t jack_runtime_data;
+  jack_nframes_t control_ticks;
+
+  unsigned int previous_X;
+  unsigned int previous_Y;
+  
+  sdl_context screen;
+} midi_board_data_t;
 
 int midi_board_jack_send_cc(void *port_buffer, jack_nframes_t nframes, 
 			    unsigned char chan, unsigned char cc, 
 			    unsigned char value);
 
-int midi_board_init_jack(midi_board_init_jack_args_t args);
+int midi_board_init_jack(midi_board_data_t *data);
 
 int midi_board_jack_process(jack_nframes_t nframes, void *arg);
 

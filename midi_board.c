@@ -31,97 +31,55 @@
 #include "midi_board.h"
 #include "gui.h"
 
-cwiid_wiimote_t *wiimote;
-struct balance_cal *calibration;
-
-midi_board_jack_runtime_data_t jack_runtime_data;
-
-jack_nframes_t ticks;
-midi_board_centre_t *centre;
-
 pthread_mutex_t wii_io_lock = PTHREAD_MUTEX_INITIALIZER;
-pthread_cond_t  wii_must_fetch = PTHREAD_COND_INITIALIZER;
-
-sdl_context screen;
-
-void debug_print_centre_calc(uint16_t top_left, uint16_t top_right, 
-			     uint16_t bottom_left, uint16_t bottom_right)
-{
-  struct balance_state state;
-  state.right_top = top_right;
-  state.left_top = top_left;
-  state.right_bottom = bottom_right;
-  state.left_bottom = bottom_left;
-
-  printf("TL: %u, TR: %u, BL: %u, BR: %u\n", 
-	 state.left_top, state.right_top, 
-	 state.left_bottom, state.right_bottom);
-
-  midi_board_centre_t centre;
-  struct balance_cal calibration;
-
-  midi_board_calculate_centre(&state, &calibration, &centre);
-
-  printf("X: %f, Y: %f\n", centre.X, centre.Y);
-}
+pthread_cond_t wii_must_fetch = PTHREAD_COND_INITIALIZER;
 
 int main(int argc, char *argv[]) 
 {
-  ticks = 0;
-  wiimote = NULL;
-  calibration = malloc(sizeof(struct balance_cal));
-  centre = malloc(sizeof(midi_board_centre_t));
+  midi_board_data_t data = { 
+    .control_ticks = 0, 
+    .wiimote = NULL, 
+    .quit = 0,
+  };
 
-  screen = midi_board_sdl_init_screen(600, 400);
-  
-  midi_board_sdl_wipe(screen);
-  midi_board_sdl_draw_dot_rel(screen, .5, .5, 6);
-  midi_board_sdl_flip_screen(screen);
+  data.screen = midi_board_sdl_init_screen(600, 400);
 
-  if (midi_board_init_wiimote(&wiimote, calibration)) {
+  midi_board_sdl_wipe(data.screen);
+  midi_board_sdl_draw_dot_rel(data.screen, .5, .5, 6);
+  midi_board_sdl_flip_screen(data.screen);
+
+  if (midi_board_init_wiimote(&(data.wiimote), &(data.calibration))) {
     printf("Failed to init wiimote");
     return 1;
   }
 
   printf("Connected to the wii controller!\n");
 
-  midi_board_init_jack_args_t args;
-  args.runtime_data = &jack_runtime_data;
-  args.process_callback = &midi_board_jack_process;
-  args.shutdown_callback = &midi_board_jack_shutdown;
-
-#ifdef JACK_SESSION
-
-  args.session_id = NULL;
-  args.session_callback = &midi_board_jack_session_callback;
-
-#endif
-
-  if (midi_board_init_jack(args))
+  if (midi_board_init_jack(&data))
     {
       fprintf(stderr, "Oh.. Error initialising jack\n");
-      cwiid_close(wiimote);
+      cwiid_close(data.wiimote);
       return 1;
     }
 
   pthread_t thread_id;
-  pthread_create(&thread_id, NULL, midi_board_wii_io_thread, NULL);
+  pthread_create(&thread_id, NULL, midi_board_wii_io_thread, &data);
 
   while(1)
     {
       sleep(1);
-      if (jack_runtime_data.quit)
+      if (data.quit)
 	{
 	  break;
 	}
     }
 
-  cwiid_close(wiimote);
-  jack_client_close(jack_runtime_data.client);
+  cwiid_close(data.wiimote);
+  jack_client_close(data.jack_runtime_data.client);
 
   printf("Done\n");
 
-  midi_board_sdl_teardown(screen);
+  midi_board_sdl_teardown(data.screen);
 
   return 0;
 }
@@ -149,16 +107,18 @@ int midi_board_jack_send_cc(void *port_buffer, jack_nframes_t nframes,
 
 void midi_board_jack_session_callback(jack_session_event_t *event, void *arg)
 {
+  midi_board_data_t *data = (midi_board_data_t*)arg;
+
   char retval[100];
 
   snprintf(retval, 100, "midi_board_session_client %s", event->client_uuid);
   event->command_line = strdup(retval);
 
-  jack_session_reply(jack_runtime_data.client, event);
+  jack_session_reply(data->jack_runtime_data.client, event);
 
   if (event->type == JackSessionSaveAndQuit) 
     {
-      jack_runtime_data.quit = 1;
+      data->quit = 1;
     }
 
   jack_session_event_free(event);
@@ -166,13 +126,13 @@ void midi_board_jack_session_callback(jack_session_event_t *event, void *arg)
 
 #endif
 
-int midi_board_init_jack(midi_board_init_jack_args_t args)
+int midi_board_init_jack(midi_board_data_t *data)
 {
-  midi_board_jack_runtime_data_t *runtime_data = args.runtime_data;
+  midi_board_jack_runtime_data_t *runtime_data = &(data->jack_runtime_data);
 #ifdef JACK_SESSION
-  if (args.session_id) 
+  if (0) 
     {
-      runtime_data->client = jack_client_open("wii_midi_board", JackSessionID, NULL, args.session_id);
+      runtime_data->client = jack_client_open("wii_midi_board", JackSessionID, NULL, "");
     }
   else
     {
@@ -194,16 +154,16 @@ int midi_board_init_jack(midi_board_init_jack_args_t args)
       return 1;
     }
 
-  if (jack_set_process_callback(runtime_data->client, args.process_callback, 0))
+  if (jack_set_process_callback(runtime_data->client, &midi_board_jack_process, data))
     {
       fprintf(stderr, "Failed to set the process callback!\n");
       return 1;
     }
 
-  jack_on_shutdown(runtime_data->client, args.shutdown_callback, 0);
+  jack_on_shutdown(runtime_data->client, &midi_board_jack_shutdown, data);
 
 #ifdef JACK_SESSION
-  if (jack_set_session_callback(runtime_data->client, args.session_callback, NULL))
+  if (jack_set_session_callback(runtime_data->client, &midi_board_jack_session_callback, data))
     {
       fprintf(stderr, "Failed to set the session callback!\n");
       return 1;
@@ -221,15 +181,15 @@ int midi_board_init_jack(midi_board_init_jack_args_t args)
   return 0;
 }
 
-int midi_board_should_send_cc(jack_nframes_t samples_passed) 
+int midi_board_should_send_cc(midi_board_data_t *data, jack_nframes_t samples_passed) 
 {
   const jack_nframes_t control_rate = 30; //TODO: configurable
-  jack_nframes_t control_step = jack_runtime_data.sample_rate / control_rate;
+  jack_nframes_t control_step = data->jack_runtime_data.sample_rate / control_rate;
 
-  ticks += samples_passed;
-  if (ticks > (control_step))
+  data->control_ticks += samples_passed;
+  if (data->control_ticks > (control_step))
     {
-      ticks -= control_step;
+      data->control_ticks -= control_step;
       return 1;
     }
   else
@@ -253,12 +213,18 @@ int midi_board_send_if_changed(unsigned int *old_val, unsigned int new_val,
 
 void* midi_board_wii_io_thread(void *arg)
 {
-  pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
+  midi_board_data_t *data = (midi_board_data_t*)arg;
+
+  //pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, NULL);
   pthread_mutex_lock(&wii_io_lock);
 
   while(1)
     {
-      if (midi_board_update_centre(wiimote, centre, calibration))
+      if (data->quit)
+	{
+	  break;
+	}
+      if (midi_board_update_centre(data->wiimote, &(data->centre), &(data->calibration)))
       	{
       	  fprintf(stderr, "Oh.. Error getting the centre\n");
 	  //TODO: Signal
@@ -268,13 +234,13 @@ void* midi_board_wii_io_thread(void *arg)
       	}
       else 
 	{
-	  midi_board_sdl_wipe(screen);
-	  midi_board_sdl_draw_dot_rel(screen, (centre->X + 1) / 2, (centre->Y + 1) / 2, 3);
-	  midi_board_sdl_flip_screen(screen);
-	  centre->processed = 0;
+	  midi_board_sdl_wipe(data->screen);
+	  midi_board_sdl_draw_dot_rel(data->screen, (data->centre.X + 1) / 2, 
+				      (data->centre.Y + 1) / 2, 3);
+	  midi_board_sdl_flip_screen(data->screen);
+	  data->centre.processed = 0;
 	}
 
-      //printf("We should be getting data here!\n");
       pthread_cond_wait(&wii_must_fetch, &wii_io_lock);
     }
 
@@ -283,7 +249,9 @@ void* midi_board_wii_io_thread(void *arg)
 
 int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 {
-  jack_port_t *port = jack_runtime_data.port;
+  midi_board_data_t *data = (midi_board_data_t*)arg;
+  midi_board_jack_runtime_data_t runtime_data = data->jack_runtime_data;
+  jack_port_t *port = runtime_data.port;
   void *port_buffer = jack_port_get_buffer(port, nframes);
 
   if (!port_buffer)
@@ -295,22 +263,22 @@ int midi_board_jack_process(jack_nframes_t nframes, void *arg)
   jack_midi_clear_buffer(port_buffer);
   if (pthread_mutex_trylock(&wii_io_lock) == 0) 
     {
-      if (centre->processed == 0)
+      if (data->centre.processed == 0)
 	{
-	  unsigned char send_val = (unsigned char)((centre->X + 1) * 64);
+	  unsigned char send_val = (unsigned char)((data->centre.X + 1) * 64);
       
-	  midi_board_send_if_changed(&(jack_runtime_data.previous_X),
+	  midi_board_send_if_changed(&(data->previous_X),
 				     send_val,
 				     11, port_buffer, nframes);
 
-	  send_val = (unsigned char)((centre->Y + 1) * 64);
-	  midi_board_send_if_changed(&(jack_runtime_data.previous_Y),
+	  send_val = (unsigned char)((data->centre.Y + 1) * 64);
+	  midi_board_send_if_changed(&(data->previous_Y),
 				     send_val,
 				     44, port_buffer, nframes);
-	  centre->processed = 1;
+	  data->centre.processed = 1;
 	}
 
-      if (midi_board_should_send_cc(nframes))
+      if (midi_board_should_send_cc(data, nframes))
 	{
 	  pthread_cond_signal(&wii_must_fetch);
 	}
@@ -322,7 +290,7 @@ int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 
 void midi_board_jack_shutdown(void *arg)
 {
-  exit(1);
+  exit(0);
 }
 
 int midi_board_update_centre(cwiid_wiimote_t *wiimote, 
