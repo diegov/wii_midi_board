@@ -31,8 +31,7 @@ AC_CHECK_LIB([bluetooth], [bt_malloc])
 AC_CHECK_LIB([cwiid], [cwiid_open])
 AC_CHECK_LIB([jack], [jack_midi_event_write])
 AC_CHECK_LIB([pthread], [pthread_create])
-
-PKG_CHECK_MODULES([DEPS], [cwiid jack])
+AC_CHECK_LIB([SDL], [SDL_Init])
 
 # Checks for header files.
 AC_CHECK_HEADERS([stdlib.h])
@@ -41,6 +40,9 @@ AC_CHECK_HEADER(jack/session.h, jack_session_found="yes", jack_session_found="no
 if test "$jack_session_found" = "yes"; then 
    AC_DEFINE(JACK_SESSION, 0, [Define to enable jack session support]) 
 fi
+
+# Calls pkg-config to figure out compilation flags
+PKG_CHECK_MODULES([DEPS], [cwiid jack sdl])
 
 # Checks for typedefs, structures, and compiler characteristics.
 AC_TYPE_UINT16_T
@@ -51,3 +53,4 @@ AC_CHECK_FUNCS([strdup])
 
 AC_CONFIG_FILES([Makefile])
 AC_OUTPUT
+

@@ -24,11 +24,12 @@
 #include <stdlib.h>
 #include <bluetooth/bluetooth.h>
 #include <cwiid.h>
-#include "midi_board.h"
 #include <time.h>
 #include <jack/jack.h>
 #include <jack/midiport.h>
 #include <jack/ringbuffer.h>
+#include "midi_board.h"
+#include "gui.h"
 
 cwiid_wiimote_t *wiimote;
 struct balance_cal *calibration;
@@ -41,12 +42,41 @@ midi_board_centre_t *centre;
 pthread_mutex_t wii_io_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t  wii_must_fetch = PTHREAD_COND_INITIALIZER;
 
+sdl_context screen;
+
+void debug_print_centre_calc(uint16_t top_left, uint16_t top_right, 
+			     uint16_t bottom_left, uint16_t bottom_right)
+{
+  struct balance_state state;
+  state.right_top = top_right;
+  state.left_top = top_left;
+  state.right_bottom = bottom_right;
+  state.left_bottom = bottom_left;
+
+  printf("TL: %u, TR: %u, BL: %u, BR: %u\n", 
+	 state.left_top, state.right_top, 
+	 state.left_bottom, state.right_bottom);
+
+  midi_board_centre_t centre;
+  struct balance_cal calibration;
+
+  midi_board_calculate_centre(&state, &calibration, &centre);
+
+  printf("X: %f, Y: %f\n", centre.X, centre.Y);
+}
+
 int main(int argc, char *argv[]) 
 {
   ticks = 0;
   wiimote = NULL;
   calibration = malloc(sizeof(struct balance_cal));
   centre = malloc(sizeof(midi_board_centre_t));
+
+  screen = midi_board_sdl_init_screen(600, 400);
+  
+  midi_board_sdl_wipe(screen);
+  midi_board_sdl_draw_dot_rel(screen, .5, .5, 6);
+  midi_board_sdl_flip_screen(screen);
 
   if (midi_board_init_wiimote(&wiimote, calibration)) {
     printf("Failed to init wiimote");
@@ -90,6 +120,8 @@ int main(int argc, char *argv[])
   jack_client_close(jack_runtime_data.client);
 
   printf("Done\n");
+
+  midi_board_sdl_teardown(screen);
 
   return 0;
 }
@@ -236,6 +268,9 @@ void* midi_board_wii_io_thread(void *arg)
       	}
       else 
 	{
+	  midi_board_sdl_wipe(screen);
+	  midi_board_sdl_draw_dot_rel(screen, (centre->X + 1) / 2, (centre->Y + 1) / 2, 3);
+	  midi_board_sdl_flip_screen(screen);
 	  centre->processed = 0;
 	}
 
@@ -271,7 +306,7 @@ int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 	  send_val = (unsigned char)((centre->Y + 1) * 64);
 	  midi_board_send_if_changed(&(jack_runtime_data.previous_Y),
 				     send_val,
-				     7, port_buffer, nframes);
+				     44, port_buffer, nframes);
 	  centre->processed = 1;
 	}
 
@@ -317,9 +352,9 @@ int midi_board_update_centre(cwiid_wiimote_t *wiimote,
   return 0;
 }
 
-uint16_t midi_board_get_calibrated_value(uint16_t reading, uint16_t *calibration)
+unsigned int midi_board_get_calibrated_value(uint16_t reading, uint16_t *calibration)
 {
-  uint16_t weight;
+  unsigned int weight;
 
   if (reading < calibration[1])
     {            
@@ -341,7 +376,7 @@ int midi_board_calculate_centre(struct balance_state *readings,
 				struct balance_cal *balance_cal,
 				midi_board_centre_t *centre) 
 {
-  uint16_t top_right, top_left, bottom_right, bottom_left;
+  unsigned int top_right, top_left, bottom_right, bottom_left;
   top_right = midi_board_get_calibrated_value(readings->right_top,
 					      balance_cal->right_top);
 
@@ -354,8 +389,6 @@ int midi_board_calculate_centre(struct balance_state *readings,
   bottom_left = midi_board_get_calibrated_value(readings->left_bottom,
 						balance_cal->left_bottom);
 
-  //printf("Got values! (%u %u %u %u)\n", top_left, top_right, bottom_right, bottom_left);
-
   double top, bottom, left, right, total_weight;
   top = (top_right + top_left);
   bottom = (bottom_right + bottom_left);
@@ -365,10 +398,8 @@ int midi_board_calculate_centre(struct balance_state *readings,
 
   total_weight = top + bottom;
 
-  centre->X = top / total_weight - bottom / total_weight;
-  centre->Y = left / total_weight - right / total_weight;
-
-  //printf("X: %f. y: %f\n", centre->X, centre->Y);
+  centre->X = right / total_weight - left / total_weight;
+  centre->Y = bottom / total_weight - top / total_weight;
 
   return 0;
 }
