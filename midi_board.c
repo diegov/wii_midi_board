@@ -20,8 +20,10 @@
  */
 
 #include <pthread.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <unistd.h>
 #include <bluetooth/bluetooth.h>
 #include <cwiid.h>
 #include <time.h>
@@ -34,24 +36,52 @@
 pthread_mutex_t wii_io_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t wii_must_fetch = PTHREAD_COND_INITIALIZER;
 
+sig_atomic_t quit;
+
+void sigint(int signo) {
+  quit = 1;
+}
+
+int start_wii_io_thread(pthread_t *thread_id, midi_board_data_t *data)
+{
+  // Make sure we're the only thread that could receive a SIGINT
+  sigset_t sigset, oldset;
+  sigemptyset(&sigset);
+  sigaddset(&sigset, SIGINT);
+  pthread_sigmask(SIG_BLOCK, &sigset, &oldset);
+
+  int retval = pthread_create(thread_id, NULL, midi_board_wii_io_thread, data);
+
+  struct sigaction sigact;
+  sigact.sa_handler = sigint;
+  sigemptyset(&sigact.sa_mask);
+  sigact.sa_flags = 0;
+  sigaction(SIGINT, &sigact, NULL);
+
+  pthread_sigmask(SIG_SETMASK, &oldset, NULL);
+
+  return retval;
+}
+
 int main(int argc, char *argv[]) 
 {
-  midi_board_data_t data = { 
-    .control_ticks = 0, 
-    .wiimote = NULL, 
-    .quit = 0,
-  };
+  quit = 0;
 
+  midi_board_data_t data;
+  data.control_ticks = 0;
+  data.wiimote = NULL;
   data.screen = midi_board_sdl_init_screen(600, 400);
 
   midi_board_sdl_wipe(data.screen);
   midi_board_sdl_draw_dot_rel(data.screen, .5, .5, 6);
   midi_board_sdl_flip_screen(data.screen);
 
-  if (midi_board_init_wiimote(&(data.wiimote), &(data.calibration))) {
-    printf("Failed to init wiimote");
-    return 1;
-  }
+  if (midi_board_init_wiimote(&(data.wiimote), &(data.calibration))) 
+    {
+      printf("Failed to init wiimote");
+      quit = 1;
+      return 1;
+    }
 
   printf("Connected to the wii controller!\n");
 
@@ -62,17 +92,26 @@ int main(int argc, char *argv[])
       return 1;
     }
 
+  int retcode = 0;
+
   pthread_t thread_id;
-  pthread_create(&thread_id, NULL, midi_board_wii_io_thread, &data);
+  if (start_wii_io_thread(&thread_id, &data))
+    {
+      fprintf(stderr, "Error initialising wii io thread\n");
+      quit = 1;
+      retcode = 1;
+    }
 
   while(1)
     {
       sleep(1);
-      if (data.quit)
+      if (quit)
 	{
 	  break;
 	}
     }
+  
+  pthread_cancel(thread_id);
 
   cwiid_close(data.wiimote);
   jack_client_close(data.jack_runtime_data.client);
@@ -81,7 +120,7 @@ int main(int argc, char *argv[])
 
   midi_board_sdl_teardown(data.screen);
 
-  return 0;
+  return retcode;
 }
 
 int midi_board_jack_send_cc(void *port_buffer, jack_nframes_t nframes, 
@@ -118,7 +157,7 @@ void midi_board_jack_session_callback(jack_session_event_t *event, void *arg)
 
   if (event->type == JackSessionSaveAndQuit) 
     {
-      data->quit = 1;
+      quit = 1;
     }
 
   jack_session_event_free(event);
@@ -220,13 +259,13 @@ void* midi_board_wii_io_thread(void *arg)
 
   while(1)
     {
-      if (data->quit)
+      if (quit)
 	{
 	  break;
 	}
       if (midi_board_update_centre(data->wiimote, &(data->centre), &(data->calibration)))
       	{
-      	  fprintf(stderr, "Oh.. Error getting the centre\n");
+      	  fprintf(stderr, "Error getting the centre from the balance board\n");
 	  //TODO: Signal
       	  /* cwiid_close(wiimote); */
       	  /* jack_client_close(jack_runtime_data.client); */
@@ -299,21 +338,21 @@ int midi_board_update_centre(cwiid_wiimote_t *wiimote,
 {
   if (cwiid_request_status(wiimote))
     {
-      fprintf(stderr, "Oh.. Error getting the status\n");
+      fprintf(stderr, "Error getting the status from the wii controller\n");
       return 1;
     }
   
   struct cwiid_state state; 
   if (cwiid_get_state(wiimote, &state))
     {
-      fprintf(stderr, "Oh... Error getting the state.\n");
+      fprintf(stderr, "Error getting the state from the wii controller\n");
       return 1;
     }
 
   if (midi_board_calculate_centre(&(state.ext.balance), balance_cal, 
 				  centre))
     {
-      fprintf(stderr, "Failed to calculate the centre.\n");
+      fprintf(stderr, "Failed to calculate the centre\n");
       return 1;
     }
   
