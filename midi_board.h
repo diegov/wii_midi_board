@@ -87,7 +87,5 @@ void midi_board_jack_session_callback(jack_session_event_t *event, void *arg);
 
 int midi_board_init_wiimote(cwiid_wiimote_t **wiimote, struct balance_cal *calibration);
 
-int midi_board_update_centre(cwiid_wiimote_t *wiimote, 
-			     midi_board_centre_t *centre, 
-			     struct balance_cal *balance_cal);
+int midi_board_update_centre(midi_board_data_t *data);
 

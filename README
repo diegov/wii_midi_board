@@ -32,7 +32,7 @@ to bridge between jack midi and alsa midi.
 
 CONFIGURATION
 
-None at the moment
+See command line help running "midi_board -h"
 
 TODO
 
@@ -41,6 +41,4 @@ TODO
 * Sample-accurate scheduling of CC messages, we're relying on the 
   frames/period being small enough but we should do it properly
 * Cleanup Wii IO thread, handle signals
-* Adjustable input range, -1/1 values aren't really possible on the
-  wii balance board, there's always some weight on the opposite side
 * Jack session support

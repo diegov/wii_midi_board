@@ -63,11 +63,62 @@ int start_wii_io_thread(pthread_t *thread_id, midi_board_data_t *data)
   return retval;
 }
 
+int parse_args(int argc, char *argv[], midi_board_options_t *options)
+{
+  options->session_id = NULL;
+  options->min_x = -1;
+  options->max_x = 1;
+  options->min_y = -1;
+  options->max_y = 1;
+  
+  int optchar;
+  while ((optchar = getopt(argc, argv, "l:r:t:b:U:h")) != -1)
+    {
+      switch(optchar)
+	{
+	case 'l':
+	  options->min_x = strtod(optarg, NULL);
+	  break;
+	case 'r':
+	  options->max_x = strtod(optarg, NULL);
+	  break;
+	case 't':
+	  options->max_y = strtod(optarg, NULL);
+	  break;
+	case 'b':
+	  options->min_y = strtod(optarg, NULL);
+	  break;	  
+	case 'U':
+	  options->session_id = strdup(optarg);
+	  break;
+	case 'h':
+	  printf("\nUsage: %s [-l min_x] [-r max_x] [-b min_y] [-t max_y]\n", argv[0]);
+	  printf("Defaults are: -l \"-1\" -r 1 -b \"-1\" -t 1\n\n");
+	  exit(0);
+	default:
+	case '?':
+	  fprintf(stderr, "Unknown command line option. Try -h for help.\n");
+	  return 1;
+	}
+    }
+  return 0;
+}
+
 int main(int argc, char *argv[]) 
 {
+  midi_board_data_t data;
+
+  if (parse_args(argc, argv, &(data.options)))
+    {
+      fprintf(stderr, "Failed to parse the arguments, exiting\n");
+      return -1;
+    }
+
+  printf("Running with min_x: %f, max_x: %f, min_y: %f, max_y: %f\n", 
+	data.options.min_x, data.options.max_x, data.options.min_y, data.options.max_y);
+
   quit = 0;
 
-  midi_board_data_t data;
   data.control_ticks = 0;
   data.wiimote = NULL;
   data.screen = midi_board_sdl_init_screen(600, 400);
@@ -104,21 +155,22 @@ int main(int argc, char *argv[])
 
   while(1)
     {
-      sleep(1);
       if (quit)
 	{
 	  break;
 	}
+      sleep(1);
     }
-  
-  pthread_cancel(thread_id);
 
-  cwiid_close(data.wiimote);
   jack_client_close(data.jack_runtime_data.client);
 
-  printf("Done\n");
+  pthread_cancel(thread_id);
+  pthread_join(thread_id, NULL);
 
+  cwiid_close(data.wiimote);
   midi_board_sdl_teardown(data.screen);
+
+  printf("Done\n");
 
   return retcode;
 }
@@ -263,13 +315,9 @@ void* midi_board_wii_io_thread(void *arg)
 	{
 	  break;
 	}
-      if (midi_board_update_centre(data->wiimote, &(data->centre), &(data->calibration)))
+      if (midi_board_update_centre(data))
       	{
       	  fprintf(stderr, "Error getting the centre from the balance board\n");
-	  //TODO: Signal
-      	  /* cwiid_close(wiimote); */
-      	  /* jack_client_close(jack_runtime_data.client); */
-      	  /* return 1; */
       	}
       else 
 	{
@@ -329,13 +377,13 @@ int midi_board_jack_process(jack_nframes_t nframes, void *arg)
 
 void midi_board_jack_shutdown(void *arg)
 {
-  exit(0);
+  quit = 1;
 }
 
-int midi_board_update_centre(cwiid_wiimote_t *wiimote, 
-			     midi_board_centre_t *centre, 
-			     struct balance_cal *balance_cal) 
+int midi_board_update_centre(midi_board_data_t *data) 
 {
+  cwiid_wiimote_t *wiimote = data->wiimote;
+
   if (cwiid_request_status(wiimote))
     {
       fprintf(stderr, "Error getting the status from the wii controller\n");
@@ -349,8 +397,7 @@ int midi_board_update_centre(cwiid_wiimote_t *wiimote,
       return 1;
     }
 
-  if (midi_board_calculate_centre(&(state.ext.balance), balance_cal, 
-				  centre))
+  if (midi_board_calculate_centre(&(state.ext.balance), data))
     {
       fprintf(stderr, "Failed to calculate the centre\n");
       return 1;
@@ -359,7 +406,7 @@ int midi_board_update_centre(cwiid_wiimote_t *wiimote,
   return 0;
 }
 
-unsigned int midi_board_get_calibrated_value(uint16_t reading, uint16_t *calibration)
+unsigned int midi_board_get_calibrated_value(unsigned int reading, uint16_t *calibration)
 {
   unsigned int weight;
 
@@ -379,10 +426,20 @@ unsigned int midi_board_get_calibrated_value(uint16_t reading, uint16_t *calibra
   return weight;
 }
 
-int midi_board_calculate_centre(struct balance_state *readings, 
-				struct balance_cal *balance_cal,
-				midi_board_centre_t *centre) 
+double project_to_unit(double value, double min, double max)
 {
+  if (value < min) return -1;
+  if (value > max) return 1;
+
+  if (min == -1 && max == 1) return value;
+
+  // Project to -1 .. 1 range
+  return 2 * (value - min) / (max - min) - 1;
+}
+
+int midi_board_calculate_centre(struct balance_state *readings, midi_board_data_t *data)
+{
+  struct balance_cal *balance_cal = &(data->calibration);
   unsigned int top_right, top_left, bottom_right, bottom_left;
   top_right = midi_board_get_calibrated_value(readings->right_top,
 					      balance_cal->right_top);
@@ -405,14 +462,14 @@ int midi_board_calculate_centre(struct balance_state *readings,
 
   total_weight = top + bottom;
 
-  centre->X = right / total_weight - left / total_weight;
-  centre->Y = bottom / total_weight - top / total_weight;
-
+  data->centre.X = project_to_unit(right / total_weight - left / total_weight, 
+				   data->options.min_x, data->options.max_x);
+  data->centre.Y = project_to_unit(bottom / total_weight - top / total_weight,
+				   data->options.min_y, data->options.max_y);
   return 0;
 }
 
-int midi_board_init_wiimote(cwiid_wiimote_t **wiimote, 
-			    struct balance_cal *calibration) 
+int midi_board_init_wiimote(cwiid_wiimote_t **wiimote, struct balance_cal *calibration) 
 {
   bdaddr_t bdaddr = *BDADDR_ANY;
 
